@@ -1,0 +1,6 @@
+data/*
+logs/*
+usdt_api.py
+usdt_ws.py
+__init__.py
+local_config.py
