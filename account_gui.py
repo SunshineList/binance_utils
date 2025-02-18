@@ -6,17 +6,17 @@ from datetime import datetime
 import sys
 
 try:
-    from local_config import api_key, api_secret
+    from local_config import *
 except ImportError:
-    from config import api_key, api_secret
+    from config import *
 
 
 class BinanceAccountGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         # 初始化币安客户端
-        self.api_key = api_key
-        self.api_secret = api_secret
+        self.api_key = API_KEY
+        self.api_secret = API_SECRET
         self.client = Client(self.api_key, self.api_secret)
 
         # 初始化定时器

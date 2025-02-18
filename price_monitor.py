@@ -5,13 +5,13 @@ from datetime import datetime
 import os
 from decimal import Decimal, ROUND_DOWN
 try:
-    from local_config import api_key, api_secret
+    from local_config import *
 except ImportError:
-    from config import api_key, api_secret
+    from config import *
 
 class PriceMonitor:
     def __init__(self, api_key, api_secret):
-        self.client = Client(api_key=api_key, api_secret=api_secret)
+        self.client = Client(api_key=api_key, api_secret=api_secret, testnet=IS_DEBUG)
         self.base_dir = 'price_data'
         if not os.path.exists(self.base_dir):
             os.makedirs(self.base_dir)
@@ -363,7 +363,7 @@ PAIR_CONFIGS = [
         'pair2': {'symbol': 'ADAUSD_250328', 'type': 'futures'},
         'description': 'ADA-现货vs合约',
         'trade_params': {
-            'trade_amount': 10,  # 每次交易数量
+            'trade_amount': 1,  # 每次交易数量
             'open_threshold': 0.6,  # 开仓阈值
             'close_threshold': 0.62,  # 平仓阈值
             'price_step': 0.1,  # 价格调整步长（百分比）
@@ -399,8 +399,8 @@ PAIR_CONFIGS = [
 
 def main():
     monitor = PriceMonitor(
-        api_key=api_key,
-        api_secret=api_secret
+        api_key=TEST_FUTURE_API_KEY,
+        api_secret=TEST_FUTURE_API_SECRET
     )
     monitor.monitor_prices(PAIR_CONFIGS)
 

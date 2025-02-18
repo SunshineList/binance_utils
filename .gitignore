@@ -4,3 +4,6 @@ usdt_api.py
 usdt_ws.py
 __init__.py
 local_config.py
+.DS_Store
+test*
+__pycache__
