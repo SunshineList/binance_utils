@@ -341,7 +341,8 @@ class BinanceTrader:
             mark_price = float(mark_price_info['markPrice'])
             max_price = float(exchange_info['max_price'])
             min_price = float(exchange_info['min_price'])
-            
+            contract_size = float(exchange_info['contract_size'])
+   
             if not self.change_leverage_mode(symbol, LEVERAGE):
                 return None
             
@@ -350,7 +351,6 @@ class BinanceTrader:
                 'symbol': symbol,
                 'side': side,  # BUY or SELL
                 'type': order_type,  # LIMIT, MARKET, STOP, STOP_MARKET等
-                'quantity': quantity,
                 'newOrderRespType': 'RESULT'
             }
 
@@ -370,6 +370,10 @@ class BinanceTrader:
                     adjusted_price = round(max(price, min_allowed_price, min_price), 1)
                 
                 params['price'] = adjusted_price
+
+            # quantity的计算方式是 quantity * 价格 / contract_size 取整
+            quantity = int((quantity * adjusted_price) // contract_size)
+            params["quantity"] = quantity
 
             if stop_price:
                 params['stopPrice'] = stop_price
@@ -398,6 +402,7 @@ class BinanceTrader:
                     return None
                 # 提取交易对规则
                 params = {}
+                params["contract_size"] = float(symbol_info['contractSize'])
                 for f in symbol_info['filters']:
                     if f['filterType'] == 'PRICE_FILTER':
                         params['min_price'] = f["minPrice"]
