@@ -27,7 +27,7 @@ class PriceMonitorWS:
     async def init_clients(self, api_key, api_secret):
         """初始化异步客户端"""
         if IS_DEBUG:
-            self.client = await AsyncClient.create(api_key=API_KEY, api_secret=API_KEY, testnet=not IS_DEBUG)
+            self.client = await AsyncClient.create(api_key=API_KEY, api_secret=API_SECRET, testnet=not IS_DEBUG)
         else:
             self.client = await AsyncClient.create(api_key=api_key, api_secret=api_secret)
         self.bsm = BinanceSocketManager(self.client)
@@ -82,7 +82,7 @@ class PriceMonitorWS:
                 depth1 = self.price_data[pair1_key]
                 depth2 = self.price_data[pair2_key]
                 
-                price_diff_percentage = round((abs((depth1['bid'] - depth2['bid'])) / depth2['bid']) * 100, 2)
+                price_diff_percentage = round(((depth1['bid'] - depth2['bid']) / depth2['bid']) * 100, 2)
                 
                 data = {
                     'pair1_symbol': pair1['symbol'],
@@ -241,7 +241,7 @@ class BinanceTrader:
             estimated_required_margin = quantity * 0.01  # 示例：假设需要1%的保证金
             
             if available_balance < estimated_required_margin:
-                return False, (
+                return False, margin_balance, (
                     f"保证金不足\n"
                     f"可用余额: {available_balance} {assets}\n"
                     f"钱包余额: {wallet_balance} {assets}\n"
@@ -250,7 +250,7 @@ class BinanceTrader:
                     f"预估所需保证金: {estimated_required_margin} {assets}"
                 )
             
-            return True, (
+            return True, margin_balance, (
                 f"保证金充足\n"
                 f"可用余额: {available_balance} {assets}\n"
                 f"预估所需保证金: {estimated_required_margin} {assets}"
@@ -262,72 +262,89 @@ class BinanceTrader:
     def place_order(self, symbol, side, order_type, quantity, price=None, stop_price=None):
         """下单功能"""
         try:
+            # 获取交易对的价格限制规则
+            exchange_info = self.get_exchange_info(symbol)
+            if not exchange_info:
+                print(f"无法获取{symbol}的交易规则信息")
+                return None
+
+            # 获取Mark Price
+            mark_price_info = self.client.futures_coin_mark_price(symbol=symbol)[0]
+            if not mark_price_info:
+                print(f"无法获取{symbol}的标记价格")
+                return None
+
+            mark_price = float(mark_price_info['markPrice'])
+            max_price = float(exchange_info['max_price'])
+            min_price = float(exchange_info['min_price'])
+
             params = {
                 'symbol': symbol,
                 'side': side,  # BUY or SELL
                 'type': order_type,  # LIMIT, MARKET, STOP, STOP_MARKET等
                 'quantity': quantity,
-                'timeInForce': 'GTC',
                 'newOrderRespType': 'RESULT'
             }
+
+            if order_type == 'LIMIT':
+                params["timeInForce"] = 'GTC'
             
-            #TODO这里只保留这个
             if price:
-                params['price'] = price - 15000
-            if side == "SELL":
-                if params["price"] < 86238.1 + 100:
-                    params["price"] = 86238.1 + 100
-            if side == "BUY":
-                if params["price"] > 80351.4 + 500:
-                    params["price"] = 80351.4 + 500
+                # 根据标记价格和价格限制调整下单价格
+                adjusted_price = price
+                if side == 'BUY':
+                    # 买单价格不能高于标记价格的一定比例
+                    max_allowed_price = mark_price * 1.01  # 假设最大允许高于标记价格1%
+                    adjusted_price = round(min(price, max_allowed_price, max_price), 1)
+                else:  # SELL
+                    # 卖单价格不能低于标记价格的一定比例
+                    min_allowed_price = mark_price * 0.99  # 假设最小允许低于标记价格1%
+                    adjusted_price = round(max(price, min_allowed_price, min_price), 1)
+                
+                params['price'] = adjusted_price
 
             if stop_price:
                 params['stopPrice'] = stop_price
 
+            print(f"下单参数: {params}")
             order = self.client.futures_coin_create_order(**params)
-            print(order)
+            print(f"下单结果: {order}")
             return order
         
         except Exception as e:
             print(f"下单失败: {e}")
             return None
 
-    def get_open_orders(self, symbol=None):
-        """查看当前委托订单"""
+    def get_exchange_info(self, symbol=None):
+        """获取交易对规则和交易对信息
+        :param symbol: 交易对名称，如果不指定则返回所有交易对信息
+        :return: 交易对规则和信息
+        """
         try:
+            # 获取交易对信息
+            exchange_info = self.client.futures_coin_exchange_info()
+            
             if symbol:
-                orders = self.client.futures_coin_get_open_orders(symbol=symbol)
-            else:
-                orders = self.client.futures_coin_get_open_orders()
-            return orders
-        except Exception as e:
-            print(f"获取委托订单失败: {e}")
-            return None
-
-    def cancel_and_replace_order(self, symbol, order_id, new_quantity=None, new_price=None):
-        """撤单并重新下单"""
-        try:
-            # 先获取原订单信息
-            order = self.client.futures_coin_get_order(symbol=symbol, orderId=order_id)
-            
-            # 撤销原订单
-            self.client.futures_coin_cancel_order(symbol=symbol, orderId=order_id)
-            
-            # 使用原订单信息创建新订单
-            new_order_params = {
-                'symbol': symbol,
-                'side': order['side'],
-                'type': order['type'],
-                'quantity': new_quantity if new_quantity else order['origQty'],
-                'price': new_price if new_price else order['price']
-            }
-            
-            # 下新订单
-            new_order = self.client.futures_coin_create_order(**new_order_params)
-            return new_order
+                # 如果指定了交易对，只返回该交易对的信息
+                symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+                if not symbol_info:
+                    return None
+                # 提取交易对规则
+                params = {}
+                for f in symbol_info['filters']:
+                    if f['filterType'] == 'PRICE_FILTER':
+                        params['min_price'] = f["minPrice"]
+                        params["max_price"] = f["maxPrice"]
+                        params['tickSize'] = float(f['tickSize'])
+                    elif f['filterType'] == 'LOT_SIZE':
+                        params["max_qty"] = f["maxQty"]
+                        params["min_qty"] = f["minQty"]
+                        params['stepSize'] = float(f['stepSize'])
+            # 返回所有交易对信息
+            return params
         
         except Exception as e:
-            print(f"撤单重下失败: {e}")
+            print(f"获取交易规则失败: {e}")
             return None
         
     def bussiness(self, price_diff_percentage, pair1_price, pair2_price, pair1_symbol, pair2_symbol):
@@ -346,8 +363,8 @@ class BinanceTrader:
             return
             
         # 检查保证金是否充足
-        margin_check, margin_info = self.check_margin(pair1_symbol, QUANTITY)
-        if not margin_check or float(margin_info.split('\n')[1].split(':')[1].strip().split()[0]) <= MARGIN_LOW_VALUE:
+        margin_check, margin_balance, margin_info = self.check_margin(pair1_symbol, QUANTITY)
+        if not margin_check or margin_balance <= MARGIN_LOW_VALUE:
             print(f"保证金不足，跳过本次交易\n{margin_info}")
             return
 
@@ -445,7 +462,9 @@ class BinanceTrader:
                         sell_order = self.place_order(pair1_symbol, 'SELL', 'LIMIT', QUANTITY, sell_price)
 
                     retry_count += 1
-
+            # 如果失败了所有的重试次数，取消所有订单
+            # self.client.futures_coin_cancel_all_open_orders(symbol=pair1_symbol)
+            # self.client.futures_coin_cancel_all_open_orders(symbol=pair2_symbol)
         except Exception as e:
             print(f"交易执行错误: {e}")
 
@@ -456,5 +475,6 @@ if __name__ == "__main__":
     monitor = PriceMonitorWS()
     asyncio.run(monitor.main())
     # trader = BinanceTrader()
+    # print(trader.get_exchange_info(symbol="BTCUSD_PERP"))
     # pprint.pp(trader.check_margin("ADAUSD_250328", 0.0025, 'BTC'))
     # trader.get_commission_rate('BTCUSD_250627')
