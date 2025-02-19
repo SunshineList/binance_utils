@@ -1,11 +1,39 @@
+import logging
 import asyncio
 from datetime import datetime
-import pprint
+import time
 import pandas as pd
 import os
 from binance import AsyncClient, BinanceSocketManager
 from binance.client import Client
 from binance.enums import FuturesType
+
+# 配置日志
+def setup_logger(name, log_file, level=logging.INFO):
+    """设置日志配置"""
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # 创建logs目录
+    os.makedirs('logs', exist_ok=True)
+    
+    # 文件处理器
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+    
+    # 控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    
+    # 创建logger
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
+
+# 创建主日志记录器
+logger = setup_logger('price_monitor', 'logs/price_monitor.log')
 
 try:
     from local_config import *
@@ -27,7 +55,7 @@ class PriceMonitorWS:
     async def init_clients(self, api_key, api_secret):
         """初始化异步客户端"""
         if IS_DEBUG:
-            self.client = await AsyncClient.create(api_key=API_KEY, api_secret=API_SECRET, testnet=not IS_DEBUG)
+            self.client = await AsyncClient.create(api_key=TEST_FUTURE_API_KEY, api_secret=TEST_FUTURE_API_SECRET, testnet=IS_DEBUG)
         else:
             self.client = await AsyncClient.create(api_key=api_key, api_secret=api_secret)
         self.bsm = BinanceSocketManager(self.client)
@@ -60,7 +88,7 @@ class PriceMonitorWS:
             }
             await self.calculate_price_difference()
         except Exception as e:
-            print(f"处理消息错误: {e}")
+            logger.error(f"处理消息错误: {e}")
 
     async def calculate_price_difference(self):
         """计算并保存价格差异"""
@@ -124,7 +152,6 @@ class PriceMonitorWS:
                     pair2_symbol=pair2['symbol']
                 )
 
-
     async def save_to_csv(self, data):
         """保存数据到CSV文件"""
         try:
@@ -132,12 +159,12 @@ class PriceMonitorWS:
             df = pd.DataFrame([data])
             df.to_csv(filename, mode='a', header=not os.path.exists(filename), index=False)
         except Exception as e:
-            print(f"保存数据错误: {e}")
+            logger.error(f"保存数据错误: {e}")
 
     def print_price_data(self, data):
         """打印价格数据"""
-        print(f"\n{data['description']} | {data['timestamp']}")
-        print(f"{data['pair1_symbol']}({data['pair1_type']}) 买一: {data['pair1_bid']} | "
+        logger.info(f"\n{data['description']} | {data['timestamp']}")
+        logger.info(f"{data['pair1_symbol']}({data['pair1_type']}) 买一: {data['pair1_bid']} | "
               f"{data['pair2_symbol']}({data['pair2_type']}) 买一: {data['pair2_bid']} | "
               f"价差: {data['difference_percentage']}%")
 
@@ -180,6 +207,41 @@ class BinanceTrader:
             self.client = Client(TEST_FUTURE_API_KEY, TEST_FUTURE_API_SECRET, testnet=IS_DEBUG)
         else:
             self.client = Client(API_KEY, API_SECRET)
+
+    def change_leverage_mode(self, symbol, leverage):
+        """
+        切换杠杆模式
+        :param symbol: 交易对
+        :param leverage: 杠杆倍数
+        :return: 切换结果
+        """
+        try:
+            # 直接返回API调用结果
+            result = self.client.futures_coin_change_leverage(symbol=symbol, leverage=leverage)
+            result = result.get('leverage') == leverage
+            logger.info(f"{symbol}已切换至{leverage}倍杠杆") if result else logger.error(f"{symbol}切换杠杆失败")
+            return result
+            
+        except Exception as e:
+            logger.error(f"切换杠杆模式失败: {e}")
+            return False
+        
+    def change_margin_type_mode(self, symbol, margin_type):
+        """
+        切换保证金模式
+        :param symbol: 交易对
+        :param margin_type: 保证金类型
+        :return: 切换结果
+        """
+        try:
+            # 直接返回API调用结果
+            result = self.client.futures_coin_change_margin_type(symbol=symbol, marginType=margin_type)
+            logger.info(f"{symbol}已切换至{margin_type}保证金模式") if result else logger.error(f"{symbol}切换保证金模式失败")
+            return bool(result)
+            
+        except Exception as e:
+            logger.error(f"切换保证金模式失败: {e}")
+            return False
 
     def get_commission_rate(self, symbol):
         """获取交易对的手续费率"""
@@ -241,7 +303,7 @@ class BinanceTrader:
             estimated_required_margin = quantity * 0.01  # 示例：假设需要1%的保证金
             
             if available_balance < estimated_required_margin:
-                return False, margin_balance, (
+                logger.warning(
                     f"保证金不足\n"
                     f"可用余额: {available_balance} {assets}\n"
                     f"钱包余额: {wallet_balance} {assets}\n"
@@ -249,15 +311,17 @@ class BinanceTrader:
                     f"保证金余额: {margin_balance} {assets}\n"
                     f"预估所需保证金: {estimated_required_margin} {assets}"
                 )
+                return False, margin_balance, "保证金不足"
             
-            return True, margin_balance, (
+            logger.info(
                 f"保证金充足\n"
                 f"可用余额: {available_balance} {assets}\n"
-                f"预估所需保证金: {estimated_required_margin} {assets}"
             )
+            return True, margin_balance, "保证金充足"
         
         except Exception as e:
-            return False, f"检查保证金时发生错误: {e}"
+            logger.error(f"检查保证金时发生错误: {e}")
+            return False, 0, f"检查保证金时发生错误: {e}"
 
     def place_order(self, symbol, side, order_type, quantity, price=None, stop_price=None):
         """下单功能"""
@@ -265,19 +329,23 @@ class BinanceTrader:
             # 获取交易对的价格限制规则
             exchange_info = self.get_exchange_info(symbol)
             if not exchange_info:
-                print(f"无法获取{symbol}的交易规则信息")
+                logger.error(f"无法获取{symbol}的交易规则信息")
                 return None
 
             # 获取Mark Price
             mark_price_info = self.client.futures_coin_mark_price(symbol=symbol)[0]
             if not mark_price_info:
-                print(f"无法获取{symbol}的标记价格")
+                logger.error(f"无法获取{symbol}的标记价格")
                 return None
 
             mark_price = float(mark_price_info['markPrice'])
             max_price = float(exchange_info['max_price'])
             min_price = float(exchange_info['min_price'])
-
+            
+            if not self.change_leverage_mode(symbol, LEVERAGE):
+                return None
+            
+            # 构建下单参数
             params = {
                 'symbol': symbol,
                 'side': side,  # BUY or SELL
@@ -306,13 +374,12 @@ class BinanceTrader:
             if stop_price:
                 params['stopPrice'] = stop_price
 
-            print(f"下单参数: {params}")
+            logger.info(f"下单参数: {params}")
             order = self.client.futures_coin_create_order(**params)
-            print(f"下单结果: {order}")
             return order
         
         except Exception as e:
-            print(f"下单失败: {e}")
+            logger.error(f"下单失败: {e}")
             return None
 
     def get_exchange_info(self, symbol=None):
@@ -344,7 +411,7 @@ class BinanceTrader:
             return params
         
         except Exception as e:
-            print(f"获取交易规则失败: {e}")
+            logger.error(f"获取交易规则失败: {e}")
             return None
         
     def bussiness(self, price_diff_percentage, pair1_price, pair2_price, pair1_symbol, pair2_symbol):
@@ -365,116 +432,96 @@ class BinanceTrader:
         # 检查保证金是否充足
         margin_check, margin_balance, margin_info = self.check_margin(pair1_symbol, QUANTITY)
         if not margin_check or margin_balance <= MARGIN_LOW_VALUE:
-            print(f"保证金不足，跳过本次交易\n{margin_info}")
+            logger.warning(f"保证金不足，跳过本次交易\n{margin_info}")
             return
 
         try:
             if price_diff_percentage <= LOW_PERCENTAGE_DEFAULT:
-                # 卖掉BTCUSD_PERP
-                sell_price = pair2_price - PRICE_DIFF
-
-                sell_order = self.place_order(
-                    symbol=pair2_symbol,
-                    side='SELL',
-                    order_type='LIMIT',
-                    quantity=QUANTITY,
-                    price=sell_price
-                )
-
-                # 买入BTCUSD_250627
-                buy_price = pair1_price + PRICE_DIFF
-
-                buy_order = self.place_order(
-                    symbol=pair1_symbol,
-                    side='BUY',
-                    order_type='LIMIT',
-                    quantity=QUANTITY,
-                    price=buy_price
-                )
-
-                # 处理订单
                 retry_count = 0
+                sell_order = None
+                buy_order = None
+                
                 while retry_count < RETRY_TIMES:
-                    # 检查订单状态
-                    sell_status = self.client.futures_coin_get_order(symbol=pair2_symbol, orderId=sell_order['orderId'])
-                    buy_status = self.client.futures_coin_get_order(symbol=pair1_symbol, orderId=buy_order['orderId'])
+                    try:
+                        # 卖掉BTCUSD_PERP
+                        if not sell_order:
+                            sell_price = pair2_price - PRICE_DIFF
+                            sell_order = self.place_order(
+                                symbol=pair2_symbol,
+                                side='SELL',
+                                order_type='LIMIT',
+                                quantity=QUANTITY,
+                                price=sell_price
+                            )
 
-                    if sell_status['status'] == 'FILLED' and buy_status['status'] == 'FILLED':
-                        MID_NUM_VALUE -= 1
-                        print(f"交易成功，当前MID_NUM_VALUE: {MID_NUM_VALUE}")
-                        break
+                        # 买入BTCUSD_250627
+                        if not buy_order:
+                            buy_price = pair1_price + PRICE_DIFF
+                            buy_order = self.place_order(
+                                symbol=pair1_symbol,
+                                side='BUY',
+                                order_type='LIMIT',
+                                quantity=QUANTITY,
+                                price=buy_price
+                            )
 
-                    # 如果订单未成交，撤销并重新下单
-                    if sell_status['status'] == 'NEW':
-                        self.client.futures_coin_cancel_order(symbol=pair2_symbol, orderId=sell_order['orderId'])
-                        sell_price = pair2_price - PRICE_DIFF
-                        sell_order = self.place_order(pair2_symbol, 'SELL', 'LIMIT', QUANTITY, sell_price)
-
-                    if buy_status['status'] == 'NEW':
-                        self.client.futures_coin_cancel_order(symbol=pair1_symbol, orderId=buy_order['orderId'])
-                        buy_price = pair1_price + PRICE_DIFF
-                        buy_order = self.place_order(pair1_symbol, 'BUY', 'LIMIT', QUANTITY, buy_price)
-
-                    retry_count += 1
+                        # 如果两个订单都创建成功
+                        if sell_order and buy_order:
+                            MID_NUM_VALUE -= 1
+                            logger.info(f"订单创建成功，当前MID_NUM_VALUE: {MID_NUM_VALUE}")
+                            break
+                            
+                    except Exception as e:
+                        logger.error(f"订单创建失败，重试中: {e}")
+                        retry_count += 1
+                        time.sleep(1)  # 添加短暂延迟
 
             elif price_diff_percentage >= TOP_PERCENTAGE_DEFAULT:
-                # 买入BTCUSD_PERP
-                buy_price = pair2_price + PRICE_DIFF
-                buy_order = self.place_order(
-                    symbol=pair2_symbol,
-                    side='BUY',
-                    order_type='LIMIT',
-                    quantity=0.001,
-                    price=buy_price
-                )
-
-                # 卖出BTCUSD_250627
-                sell_price = pair1_price - PRICE_DIFF
-                sell_order = self.place_order(
-                    symbol=pair1_symbol,
-                    side='SELL',
-                    order_type='LIMIT',
-                    quantity=0.001,
-                    price=sell_price
-                )
-
-                # 处理订单
                 retry_count = 0
+                buy_order = None
+                sell_order = None
+                
                 while retry_count < RETRY_TIMES:
-                    # 检查订单状态
-                    buy_status = self.client.futures_coin_get_order(symbol=pair2_symbol, orderId=buy_order['orderId'])
-                    sell_status = self.client.futures_coin_get_order(symbol=pair1_symbol, orderId=sell_order['orderId'])
+                    try:
+                        # 买入BTCUSD_PERP
+                        if not buy_order:
+                            buy_price = pair2_price + PRICE_DIFF
+                            buy_order = self.place_order(
+                                symbol=pair2_symbol,
+                                side='BUY',
+                                order_type='LIMIT',
+                                quantity=QUANTITY,
+                                price=buy_price
+                            )
 
-                    if buy_status['status'] == 'FILLED' and sell_status['status'] == 'FILLED':
-                        MID_NUM_VALUE += 1
-                        print(f"交易成功，当前MID_NUM_VALUE: {MID_NUM_VALUE}")
-                        break
+                        # 卖出BTCUSD_250627
+                        if not sell_order:
+                            sell_price = pair1_price - PRICE_DIFF
+                            sell_order = self.place_order(
+                                symbol=pair1_symbol,
+                                side='SELL',
+                                order_type='LIMIT',
+                                quantity=QUANTITY,
+                                price=sell_price
+                            )
 
-                    # 如果订单未成交，撤销并重新下单
-                    if buy_status['status'] == 'NEW':
-                        self.client.futures_coin_cancel_order(symbol=pair2_symbol, orderId=buy_order['orderId'])
-                        buy_price = pair2_price + PRICE_DIFF
-                        buy_order = self.place_order(pair2_symbol, 'BUY', 'LIMIT', QUANTITY, buy_price)
+                        # 如果两个订单都创建成功
+                        if buy_order and sell_order:
+                            MID_NUM_VALUE += 1
+                            logger.info(f"订单创建成功，当前MID_NUM_VALUE: {MID_NUM_VALUE}")
+                            break
+                            
+                    except Exception as e:
+                        print(f"订单创建失败，重试中: {e}")
+                        retry_count += 1
+                        time.sleep(1)  # 添加短暂延迟
 
-                    if sell_status['status'] == 'NEW':
-                        self.client.futures_coin_cancel_order(symbol=pair1_symbol, orderId=sell_order['orderId'])
-                        sell_price = pair1_price - PRICE_DIFF
-                        sell_order = self.place_order(pair1_symbol, 'SELL', 'LIMIT', QUANTITY, sell_price)
-
-                    retry_count += 1
-            # 如果失败了所有的重试次数，取消所有订单
-            # self.client.futures_coin_cancel_all_open_orders(symbol=pair1_symbol)
-            # self.client.futures_coin_cancel_all_open_orders(symbol=pair2_symbol)
         except Exception as e:
-            print(f"交易执行错误: {e}")
+            logger.error(f"交易执行错误: {e}")
 
-        print(f"当前交易次数: {MID_NUM_VALUE}")
+        logger.info(f"当前交易次数: {MID_NUM_VALUE}")
 
 
 if __name__ == "__main__":
     monitor = PriceMonitorWS()
     asyncio.run(monitor.main())
-    # trader = BinanceTrader()
-    # print(trader.get_exchange_info(symbol="BTCUSD_PERP"))
-    # pprint.pp(trader.check_margin("ADAUSD_250328", 0.0025, 'BTC'))
-    # trader.get_commission_rate('BTCUSD_250627')
