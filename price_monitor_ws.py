@@ -34,7 +34,7 @@ def setup_logger(name, log_file, level=logging.INFO):
     return logger
 
 # 创建主日志记录器
-logger = setup_logger('price_monitor', f'logs/price_monitor_{datetime.date()}.log')
+logger = setup_logger('price_monitor', f'logs/price_monitor_{datetime.now().strftime("%Y%m%d")}.log')
 
 try:
     from local_config import *
