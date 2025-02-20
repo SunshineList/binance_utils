@@ -34,7 +34,7 @@ def setup_logger(name, log_file, level=logging.INFO):
     return logger
 
 # 创建主日志记录器
-logger = setup_logger('price_monitor', 'logs/price_monitor.log')
+logger = setup_logger('price_monitor', f'logs/price_monitor_{datetime.date()}.log')
 
 try:
     from local_config import *
@@ -439,9 +439,6 @@ class BinanceTrader:
         :param pair2_symbol: BTCUSD_PERP
         """
         global MID_NUM_VALUE
-
-        if MID_NUM_VALUE <= MIN_NUM_VALUE or MID_NUM_VALUE >= TOP_NUM_VALUE:
-            return
 
         try:
             if price_diff_percentage <= LOW_PERCENTAGE_DEFAULT:
