@@ -1,4 +1,5 @@
 import logging
+import telebot
 import asyncio
 from datetime import datetime
 import pprint
@@ -8,6 +9,17 @@ import os
 from binance import AsyncClient, BinanceSocketManager
 from binance.client import Client
 from binance.enums import FuturesType
+
+
+async def tg_push(message: str = None) -> None:
+    """异步发送Telegram通知"""
+    try:
+        tb = telebot.TeleBot(TG_TOKEN)
+        await asyncio.to_thread(tb.send_message, MESSAGE_ID, message)
+        logger.info("Telegram通知发送成功")
+    except Exception as e:
+        logger.error(f"Telegram通知发送失败: {e}")
+
 
 # 配置日志
 def setup_logger(name, log_file, level=logging.INFO):
@@ -484,6 +496,8 @@ class BinanceTrader:
                             logger.info(f"卖出订单信息: {sell_order}")
                             logger.info(f"买入订单信息: {buy_order}")
                             logger.info(f"订单创建成功，当前MID_NUM_VALUE: {MID_NUM_VALUE}")
+                            # 异步发送Telegram通知
+                            asyncio.create_task(tg_push(f"下单成功:\n卖出: {pair2_symbol} @ {sell_price}\n买入: {pair1_symbol} @ {buy_price}\n当前交易次数: {MID_NUM_VALUE}"))
                             break
                             
                     except Exception as e:
@@ -532,6 +546,8 @@ class BinanceTrader:
                         if buy_order and sell_order:
                             MID_NUM_VALUE += 1
                             logger.info(f"订单创建成功，当前MID_NUM_VALUE: {MID_NUM_VALUE}")
+                            # 异步发送Telegram通知
+                            asyncio.create_task(tg_push(f"下单成功:\n买入: {pair2_symbol} @ {buy_price}\n卖出: {pair1_symbol} @ {sell_price}\n当前交易次数: {MID_NUM_VALUE}"))
                             break
                             
                     except Exception as e:

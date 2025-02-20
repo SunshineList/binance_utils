@@ -52,3 +52,7 @@ LEVERAGE = 10
 
 # 全仓模式
 MARGIN_TYPE = "CROSSED"
+
+# tg通知
+TG_TOKEN = ""
+MESSAGE_ID = ""
