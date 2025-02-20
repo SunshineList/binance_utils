@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from datetime import datetime
+import pprint
 import time
 import pandas as pd
 import os
@@ -138,19 +139,18 @@ class PriceMonitorWS:
                     await self.save_to_csv(data)
                     self.last_save_times[pair_desc] = current_time
                     self.first_data[pair_desc] = False  # 更新标志位
-                
-                # 实时打印最新数据
-                self.print_price_data(data)
-                
-                # 调用交易策略
-                trader = BinanceTrader()
-                trader.bussiness(
-                    price_diff_percentage=price_diff_percentage,
-                    pair1_price=depth1['bid'],
-                    pair2_price=depth2['bid'],
-                    pair1_symbol=pair1['symbol'],
-                    pair2_symbol=pair2['symbol']
-                )
+                    # 实时打印最新数据
+                    self.print_price_data(data)
+                    
+                    # 调用交易策略
+                    trader = BinanceTrader()
+                    trader.bussiness(
+                        price_diff_percentage=price_diff_percentage,
+                        pair1_price=depth1['bid'],
+                        pair2_price=depth2['bid'],
+                        pair1_symbol=pair1['symbol'],
+                        pair2_symbol=pair2['symbol']
+                    )
 
     async def save_to_csv(self, data):
         """保存数据到CSV文件"""
@@ -419,6 +419,16 @@ class BinanceTrader:
             logger.error(f"获取交易规则失败: {e}")
             return None
         
+    def get_all_orders(self, symbol):
+        """获取所有订单信息方便查询成交价"""
+        try:
+            orders = self.client.futures_coin_get_all_orders(symbol=symbol)
+            return orders
+        except Exception as e:
+            logger.error(f"获取订单失败: {e}")
+            return None
+
+        
     def bussiness(self, price_diff_percentage, pair1_price, pair2_price, pair1_symbol, pair2_symbol):
         """
         核心业务逻辑
@@ -430,18 +440,19 @@ class BinanceTrader:
         """
         global MID_NUM_VALUE
 
-        # 如果交易次数超出范围，等待下一次交易机会
         if MID_NUM_VALUE <= MIN_NUM_VALUE or MID_NUM_VALUE >= TOP_NUM_VALUE:
-            return
-            
-        # 检查保证金是否充足
-        margin_check, margin_balance, margin_info = self.check_margin(pair1_symbol, QUANTITY)
-        if not margin_check or margin_balance <= MARGIN_LOW_VALUE:
-            logger.warning(f"保证金不足，跳过本次交易\n{margin_info}")
             return
 
         try:
             if price_diff_percentage <= LOW_PERCENTAGE_DEFAULT:
+                # 如果交易次数超出范围，等待下一次交易机会
+                if MID_NUM_VALUE <= MIN_NUM_VALUE:
+                    return
+                # 检查保证金是否充足
+                margin_check, margin_balance, margin_info = self.check_margin(pair1_symbol, QUANTITY)
+                if not margin_check or margin_balance <= MARGIN_LOW_VALUE:
+                    logger.warning(f"保证金不足，跳过本次交易\n{margin_info}")
+                    return
                 retry_count = 0
                 sell_order = None
                 buy_order = None
@@ -473,6 +484,8 @@ class BinanceTrader:
                         # 如果两个订单都创建成功
                         if sell_order and buy_order:
                             MID_NUM_VALUE -= 1
+                            logger.info(f"卖出订单信息: {sell_order}")
+                            logger.info(f"买入订单信息: {buy_order}")
                             logger.info(f"订单创建成功，当前MID_NUM_VALUE: {MID_NUM_VALUE}")
                             break
                             
@@ -482,6 +495,14 @@ class BinanceTrader:
                         time.sleep(1)  # 添加短暂延迟
 
             elif price_diff_percentage >= TOP_PERCENTAGE_DEFAULT:
+                #如果交易次数超出范围，等待下一次交易机会
+                if MID_NUM_VALUE >= TOP_NUM_VALUE:
+                    return
+                # 检查保证金是否充足
+                margin_check, margin_balance, margin_info = self.check_margin(pair1_symbol, QUANTITY)
+                if not margin_check or margin_balance <= MARGIN_LOW_VALUE:
+                    logger.warning(f"保证金不足，跳过本次交易\n{margin_info}")
+                    return
                 retry_count = 0
                 buy_order = None
                 sell_order = None
@@ -530,3 +551,4 @@ class BinanceTrader:
 if __name__ == "__main__":
     monitor = PriceMonitorWS()
     asyncio.run(monitor.main())
+    
