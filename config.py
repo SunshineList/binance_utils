@@ -56,3 +56,6 @@ MARGIN_TYPE = "CROSSED"
 # tg通知
 TG_TOKEN = ""
 MESSAGE_ID = ""
+
+# 打印频次控制
+PRINT_COUNT = 100

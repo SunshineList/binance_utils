@@ -61,6 +61,8 @@ class PriceMonitorWS:
         self.save_interval = INTERVAL  # 保存间隔，单位为秒
         self.first_data = {}  # 修改为字典，为每个交易对记录首次数据标志
         self.dynamic_interval = DYNAMIC_INTERVAL  # 动态监控间隔，单位为秒
+        self.trader = BinanceTrader()
+        self.print_count = 1
         
         if not os.path.exists(self.base_dir):
             os.makedirs(self.base_dir)
@@ -106,6 +108,7 @@ class PriceMonitorWS:
     async def calculate_price_difference(self):
         """计算并保存价格差异"""
         current_time = datetime.now()
+
         
         for pair_config in self.pair_configs:
             pair1, pair2 = pair_config['pair1'], pair_config['pair2']
@@ -148,15 +151,29 @@ class PriceMonitorWS:
                 
                 # 第一次接收数据时立即保存，之后根据动态间隔保存数据
                 if self.first_data[pair_desc] or time_diff >= current_interval:
-                    await self.save_to_csv(data)
                     self.last_save_times[pair_desc] = current_time
                     self.first_data[pair_desc] = False  # 更新标志位
-                    # 实时打印最新数据
-                    self.print_price_data(data)
+                    
+                    # 控制打印频率
+                    if current_interval == self.save_interval:
+                        # 价差较大时，每隔PRINT_COUNT次打印一次
+                        if self.print_count % PRINT_COUNT == 0:
+                            should_print = True
+                            self.print_count = 1   # 不让参数变太大了造成溢出
+                        else:
+                            should_print = False
+                        self.print_count += 1
+                    else:
+                        # 价差在正常范围时不打印
+                        should_print = False
+
+                    if should_print:
+                        # 实时打印最新数据
+                        await self.save_to_csv(data)
+                        self.print_price_data(data)
                     
                     # 调用交易策略
-                    trader = BinanceTrader()
-                    trader.bussiness(
+                    self.trader.bussiness(
                         price_diff_percentage=price_diff_percentage,
                         pair1_price=depth1['bid'],
                         pair2_price=depth2['bid'],
