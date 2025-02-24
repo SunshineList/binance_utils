@@ -156,17 +156,19 @@ class PriceMonitorWS:
                     
                     # 控制打印频率
                     if current_interval == self.save_interval:
+                        self.print_count += 1
                         # 价差较大时，每隔PRINT_COUNT次打印一次
                         if self.print_count % PRINT_COUNT == 0:
                             should_print = True
-                            self.print_count = 1   # 不让参数变太大了造成溢出
+                            # 防止数值过大，定期重置
+                            if self.print_count > PRINT_COUNT:
+                                self.print_count = 1
                         else:
                             should_print = False
-                        self.print_count += 1
                     else:
                         # 价差在正常范围时不打印
                         should_print = False
-
+                    
                     if should_print:
                         # 实时打印最新数据
                         await self.save_to_csv(data)
