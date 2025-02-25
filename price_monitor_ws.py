@@ -145,15 +145,14 @@ class PriceMonitorWS:
                 
                 # 根据价差判断保存间隔
                 current_interval = self.dynamic_interval if (
-                    price_diff_percentage <= LOW_PERCENTAGE_DEFAULT + PERCENTAGE_DIFF_DEFAULT or 
-                    price_diff_percentage >= TOP_PERCENTAGE_DEFAULT - PERCENTAGE_DIFF_DEFAULT
+                    (LOW_PERCENTAGE_DEFAULT - PERCENTAGE_DIFF_DEFAULT <= price_diff_percentage <= LOW_PERCENTAGE_DEFAULT + PERCENTAGE_DIFF_DEFAULT) or 
+                    (TOP_PERCENTAGE_DEFAULT - PERCENTAGE_DIFF_DEFAULT <= price_diff_percentage <= TOP_PERCENTAGE_DEFAULT + PERCENTAGE_DIFF_DEFAULT)
                 ) else self.save_interval
                 
                 # 第一次接收数据时立即保存，之后根据动态间隔保存数据
                 if self.first_data[pair_desc] or time_diff >= current_interval:
                     self.last_save_times[pair_desc] = current_time
                     self.first_data[pair_desc] = False  # 更新标志位
-                    
                     # 控制打印频率
                     if current_interval == self.save_interval:
                         self.print_count += 1
@@ -161,7 +160,7 @@ class PriceMonitorWS:
                         if self.print_count % PRINT_COUNT == 0:
                             should_print = True
                             # 防止数值过大，定期重置
-                            if self.print_count > PRINT_COUNT:
+                            if self.print_count >= PRINT_COUNT:  # 修改这里，让计数器在达到更大的值时才重置
                                 self.print_count = 1
                         else:
                             should_print = False
@@ -577,7 +576,7 @@ class BinanceTrader:
         except Exception as e:
             logger.error(f"交易执行错误: {e}")
 
-        logger.info(f"当前交易次数: {MID_NUM_VALUE}")
+        # logger.info(f"当前交易次数: {MID_NUM_VALUE}")
 
 
 if __name__ == "__main__":
